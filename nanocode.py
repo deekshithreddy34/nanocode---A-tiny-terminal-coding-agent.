@@ -143,3 +143,169 @@ class EditFileTool(Tool):
         except Exception as e:
             return f"Error editing file: {e}"
 
+class GrepTool(Tool):
+    """Search files under a directory for lines matching a regex."""
+    
+    name = "grep"
+    description = "Search files under a directory for lines matching a regex."
+    parameters = {
+        "type": "object",
+        "properties": {
+            "pattern": {"type": "string", "description": "Regex to search for."},
+            "path": {"type": "string", "description": "Directory to search in.", "default": "."},
+        },
+        "required": ["pattern"],
+    }
+    is_read_only = True
+
+    def execute(self, args: dict[str, Any]) -> str:
+        try:
+            regex = re.compile(args["pattern"])
+        except re.error as e:
+            return f"Error: Invalid regex pattern: {e}"
+
+        matches = []
+        search_path = args.get("path", ".")
+        
+        for dirpath, _, filenames in os.walk(search_path):
+            for filename in filenames:
+                filepath = os.path.join(dirpath, filename)
+                try:
+                    with open(filepath, encoding="utf-8") as f:
+                        for lineno, line in enumerate(f, 1):
+                            if regex.search(line):
+                                matches.append(f"{filepath}:{lineno}: {line.rstrip()}")
+                except (UnicodeDecodeError, OSError):
+                    continue
+        
+        return "\n".join(matches) if matches else "No matches found."
+
+
+class BashTool(Tool):
+    """Run a shell command."""
+    
+    name = "bash"
+    description = "Run a shell command and return its output."
+    parameters = {
+        "type": "object",
+        "properties": {
+            "command": {"type": "string", "description": "Shell command to run."},
+        },
+        "required": ["command"],
+    }
+    is_read_only = False
+
+    def execute(self, args: dict[str, Any]) -> str:
+        try:
+            result = subprocess.run(
+                args["command"], 
+                shell=True, 
+                capture_output=True, 
+                text=True,
+                timeout=30
+            )
+            return result.stdout + result.stderr
+        except subprocess.TimeoutExpired:
+            return "Error: Command timed out after 30 seconds"
+        except Exception as e:
+            return f"Error running command: {e}"
+
+
+class TodoWriteTool(Tool):
+    """Manage task lists."""
+    
+    name = "todo_write"
+    description = "Write the current task list. Replaces the whole list each call."
+    parameters = {
+        "type": "object",
+        "properties": {
+            "items": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "content": {"type": "string"},
+                        "status": {"type": "string", "enum": ["pending", "in_progress", "done"]},
+                    },
+                    "required": ["content", "status"],
+                },
+            },
+        },
+        "required": ["items"],
+    }
+    is_read_only = True
+
+    def __init__(self):
+        self.items: list[dict[str, str]] = []
+
+    def execute(self, args: dict[str, Any]) -> str:
+        self.items = args["items"]
+        marks = {"pending": " ", "in_progress": "~", "done": "x"}
+        return "\n".join(
+            f"[{marks[item['status']]}] {item['content']}" 
+            for item in self.items
+        )
+
+
+class WebFetchTool(Tool):
+    """Fetch a URL and return its content."""
+    
+    name = "web_fetch"
+    description = "Fetch a URL and return its content as readable text."
+    parameters = {
+        "type": "object",
+        "properties": {
+            "url": {"type": "string", "description": "URL to fetch."},
+        },
+        "required": ["url"],
+    }
+    is_read_only = True
+
+    def execute(self, args: dict[str, Any]) -> str:
+        try:
+            response = requests.post(
+                "https://api.firecrawl.dev/v1/scrape",
+                headers={"Authorization": f"Bearer {FIRECRAWL_API_KEY}"},
+                json={"url": args["url"], "formats": ["markdown"]},
+                timeout=30
+            )
+            response.raise_for_status()
+            return response.json()["data"]["markdown"][:MAX_WEB_CONTENT_LENGTH]
+        except requests.RequestException as e:
+            return f"Error fetching URL: {e}"
+        except (KeyError, IndexError) as e:
+            return f"Error parsing response: {e}"
+
+
+class WebSearchTool(Tool):
+    """Search the web for information."""
+    
+    name = "web_search"
+    description = "Search the web and return the top results (title, URL, description)."
+    parameters = {
+        "type": "object",
+        "properties": {
+            "query": {"type": "string", "description": "Search query."},
+        },
+        "required": ["query"],
+    }
+    is_read_only = True
+
+    def execute(self, args: dict[str, Any]) -> str:
+        try:
+            response = requests.post(
+                "https://api.firecrawl.dev/v2/search",
+                headers={"Authorization": f"Bearer {FIRECRAWL_API_KEY}"},
+                json={"query": args["query"], "limit": 5, "sources": ["web"]},
+                timeout=30
+            )
+            response.raise_for_status()
+            results = response.json()["data"]["web"]
+            return "\n\n".join(
+                f"{r['title']}\n{r['url']}\n{r.get('description', '')}" 
+                for r in results
+            )
+        except requests.RequestException as e:
+            return f"Error searching web: {e}"
+        except (KeyError, IndexError) as e:
+            return f"Error parsing search results: {e}"
