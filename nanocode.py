@@ -58,3 +58,31 @@ class Tool:
                 "parameters": self.parameters,
             },
         }
+
+
+class ReadFileTool(Tool):
+    """Read a file from disk."""
+    
+    name = "read_file"
+    description = "Read a file from disk and return its contents."
+    parameters = {
+        "type": "object",
+        "properties": {
+            "path": {"type": "string", "description": "Path to the file to read."},
+        },
+        "required": ["path"],
+    }
+    is_read_only = True
+
+    def execute(self, args: dict[str, Any]) -> str:
+        try:
+            with open(args["path"], encoding="utf-8") as f:
+                return f.read()
+        except FileNotFoundError:
+            return f"Error: File not found: {args['path']}"
+        except PermissionError:
+            return f"Error: Permission denied: {args['path']}"
+        except Exception as e:
+            return f"Error reading file: {e}"
+
+
